@@ -1,15 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+
 import { Venue } from './entities/venue.entity';
-import { VenuesService } from './venues.service';
-import { VenuesController } from './venues.controller';
-
-@Module({
-  imports: [TypeOrmModule.forFeature([Venue])],
-  controllers: [VenuesController],
-  providers: [VenuesService],
-  exports: [VenuesService],
-
 import { VenueSection } from './entities/venue-section.entity';
 import { Seat } from './entities/seat.entity';
 import { IotSensor } from './entities/iot-sensor.entity';
@@ -19,6 +11,8 @@ import { VenuesService } from './venues.service';
 import { VenuesController } from './venues.controller';
 import { IotCapacityService } from './iot-capacity.service';
 import { IotCapacityController } from './iot-capacity.controller';
+import { VenueCapacityService } from './venue-capacity.service';
+import { VenueCapacityController } from './venue-capacity.controller';
 
 import { EventsModule } from '../events/events.module';
 import { AuditModule } from '../audit/audit.module';
@@ -29,6 +23,7 @@ import { Event } from '../events/entities/event.entity';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
+      Venue,
       VenueSection,
       Seat,
       IotSensor,
@@ -40,8 +35,8 @@ import { Event } from '../events/entities/event.entity';
     AuditModule,
     NotificationModule,
   ],
-  controllers: [VenuesController, IotCapacityController],
-  providers: [VenuesService, IotCapacityService],
-  exports: [VenuesService, IotCapacityService],
+  controllers: [VenuesController, IotCapacityController, VenueCapacityController],
+  providers: [VenuesService, IotCapacityService, VenueCapacityService],
+  exports: [VenuesService, IotCapacityService, VenueCapacityService],
 })
 export class VenuesModule {}

@@ -222,6 +222,7 @@ mod sponsor_tests {
 
 pub mod contract;
 pub mod error;
+pub mod venue_capacity;
 pub mod events;
 pub mod lumentix_contract;
 pub mod models;
