@@ -10,10 +10,16 @@ import { Repository } from 'typeorm';
 import { Event } from '../events/entities/event.entity';
 import { StreamingConfig } from './entities/streaming-config.entity';
 import {
+  DetectViewerBandwidthDto,
+  DetectViewerBandwidthResponseDto,
   ManageContentDeliveryDto,
   OptimizeStreamQualityDto,
+  ReportBufferingEventDto,
+  ReportBufferingResponseDto,
   StreamDeliveryResponseDto,
   StreamPerformanceResponseDto,
+  SwitchBitrateTierDto,
+  SwitchBitrateTierResponseDto,
 } from './dto/streaming.dto';
 
 @Injectable()
@@ -127,6 +133,181 @@ export class StreamingService {
     return metrics;
   }
 
+  async detectViewerBandwidth(
+    eventId: string,
+    organizerId: string,
+    dto: DetectViewerBandwidthDto,
+  ): Promise<DetectViewerBandwidthResponseDto> {
+    await this.requireOrganizerEvent(eventId, organizerId);
+
+    const sampleWindowMs = dto.sampleWindowMs ?? 5_000;
+    const estimatedBandwidthKbps =
+      (dto.uploadedBytes * 8) / (sampleWindowMs / 1_000) / 1_000;
+
+    const recommendedProfile = this.profileFromBandwidth(estimatedBandwidthKbps);
+
+    // Persist the bandwidth estimate so switchBitrateTier can use it for 'auto'
+    let config = await this.streamingRepo.findOne({ where: { eventId } });
+    if (!config) {
+      config = this.streamingRepo.create({ eventId });
+    }
+    config.performanceMetrics = {
+      ...config.performanceMetrics,
+      [`viewer_${dto.viewerId}_bandwidthKbps`]: estimatedBandwidthKbps,
+      [`viewer_${dto.viewerId}_recommendedProfile`]: recommendedProfile,
+      [`viewer_${dto.viewerId}_bandwidthSampledAt`]: new Date().toISOString(),
+    };
+    await this.streamingRepo.save(config);
+
+    this.logger.log(
+      `Bandwidth detected for viewer ${dto.viewerId} on event ${eventId}: ${estimatedBandwidthKbps.toFixed(0)} kbps -> ${recommendedProfile}`,
+    );
+
+    return {
+      viewerId: dto.viewerId,
+      estimatedBandwidthKbps: Math.round(estimatedBandwidthKbps),
+      recommendedProfile,
+      timestamp: new Date(),
+    };
+  }
+
+  async switchBitrateTier(
+    eventId: string,
+    organizerId: string,
+    dto: SwitchBitrateTierDto,
+  ): Promise<SwitchBitrateTierResponseDto> {
+    await this.requireOrganizerEvent(eventId, organizerId);
+
+    const config = await this.streamingRepo.findOne({ where: { eventId } });
+    if (!config || !config.streamUrl) {
+      throw new NotFoundException(
+        'Streaming is not configured for this event. Call manageContentDelivery first.',
+      );
+    }
+
+    const previousProfile = config.qualityProfile ?? 'auto';
+
+    let newProfile: string;
+    if (dto.targetProfile === 'auto') {
+      const storedBandwidth = config.performanceMetrics[
+        `viewer_${dto.viewerId}_bandwidthKbps`
+      ] as number | undefined;
+      newProfile = storedBandwidth != null
+        ? this.profileFromBandwidth(storedBandwidth)
+        : '720p';
+    } else {
+      newProfile = dto.targetProfile;
+    }
+
+    config.qualityProfile = newProfile;
+    await this.streamingRepo.save(config);
+
+    const cdnBaseUrl =
+      config.cdnBaseUrl ??
+      this.configService.get<string>('CDN_BASE_URL') ??
+      'https://cdn.lumentix.local';
+    const playbackUrl = `${cdnBaseUrl}/events/${eventId}/hls/${newProfile}/master.m3u8`;
+
+    this.logger.log(
+      `Bitrate tier switched for viewer ${dto.viewerId} on event ${eventId}: ${previousProfile} -> ${newProfile} (reason: ${dto.reason})`,
+    );
+
+    return {
+      eventId,
+      viewerId: dto.viewerId,
+      previousProfile,
+      newProfile,
+      playbackUrl,
+    };
+  }
+
+  async reportBufferingEvent(
+    eventId: string,
+    organizerId: string,
+    dto: ReportBufferingEventDto,
+  ): Promise<ReportBufferingResponseDto> {
+    await this.requireOrganizerEvent(eventId, organizerId);
+
+    const config = await this.streamingRepo.findOne({ where: { eventId } });
+    if (!config) {
+      throw new NotFoundException('No streaming configuration found for this event');
+    }
+
+    const profiles = ['240p', '480p', '720p', '1080p'];
+    const currentProfile = dto.currentProfile;
+    const currentIdx = profiles.indexOf(currentProfile);
+    const safeIdx = currentIdx >= 0 ? currentIdx : 2; // default to 720p index
+
+    let newProfile = currentProfile;
+    let action: 'downgraded' | 'maintained' | 'upgraded';
+    let message: string;
+
+    if (dto.bufferingDurationMs > 3_000) {
+      // Downgrade one tier if possible
+      const downIdx = Math.max(0, safeIdx - 1);
+      newProfile = profiles[downIdx];
+      action = newProfile !== currentProfile ? 'downgraded' : 'maintained';
+      message =
+        action === 'downgraded'
+          ? `Quality downgraded from ${currentProfile} to ${newProfile} due to extended buffering (${dto.bufferingDurationMs}ms)`
+          : `Already at lowest quality tier (${currentProfile}); cannot downgrade further`;
+    } else if (dto.bufferingDurationMs <= 1_000) {
+      // Try to upgrade if bandwidth estimate supports it
+      const storedBandwidth = config.performanceMetrics[
+        `viewer_${dto.viewerId}_bandwidthKbps`
+      ] as number | undefined;
+
+      if (storedBandwidth != null) {
+        const recommendedProfile = this.profileFromBandwidth(storedBandwidth);
+        const recommendedIdx = profiles.indexOf(recommendedProfile);
+        const upIdx = Math.min(profiles.length - 1, safeIdx + 1);
+
+        if (upIdx <= recommendedIdx && upIdx > safeIdx) {
+          newProfile = profiles[upIdx];
+          action = 'upgraded';
+          message = `Quality upgraded from ${currentProfile} to ${newProfile} due to stable connection`;
+        } else {
+          action = 'maintained';
+          message = `Bandwidth estimate does not support a higher tier; maintaining ${currentProfile}`;
+        }
+      } else {
+        action = 'maintained';
+        message = `No bandwidth estimate available; maintaining ${currentProfile}`;
+      }
+    } else {
+      // 1000ms < bufferingDurationMs <= 3000ms — maintain
+      action = 'maintained';
+      message = `Buffering within acceptable range (${dto.bufferingDurationMs}ms); maintaining ${currentProfile}`;
+    }
+
+    // Increment buffering event counter and persist
+    const stored = config.performanceMetrics ?? {};
+    const bufferingCount = (Number(stored[`viewer_${dto.viewerId}_bufferingCount`]) || 0) + 1;
+    config.performanceMetrics = {
+      ...stored,
+      [`viewer_${dto.viewerId}_bufferingCount`]: bufferingCount,
+      [`viewer_${dto.viewerId}_lastBufferingMs`]: dto.bufferingDurationMs,
+      [`viewer_${dto.viewerId}_lastBufferingAt`]: new Date().toISOString(),
+    };
+
+    if (newProfile !== currentProfile) {
+      config.qualityProfile = newProfile;
+    }
+    await this.streamingRepo.save(config);
+
+    this.logger.log(
+      `Buffering reported by viewer ${dto.viewerId} on event ${eventId}: ${action} (${currentProfile} -> ${newProfile})`,
+    );
+
+    return {
+      eventId,
+      viewerId: dto.viewerId,
+      action,
+      newProfile,
+      message,
+    };
+  }
+
   private async requireOrganizerEvent(
     eventId: string,
     organizerId: string,
@@ -145,6 +326,13 @@ export class StreamingService {
     if (targetBitrateKbps >= 4_500) return '1080p';
     if (targetBitrateKbps >= 2_500) return '720p';
     return '480p';
+  }
+
+  private profileFromBandwidth(bandwidthKbps: number): string {
+    if (bandwidthKbps >= 4_500) return '1080p';
+    if (bandwidthKbps >= 2_500) return '720p';
+    if (bandwidthKbps >= 1_000) return '480p';
+    return '240p';
   }
 
   private buildAdaptiveLadder(targetBitrateKbps: number): Array<{
