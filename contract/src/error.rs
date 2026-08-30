@@ -457,4 +457,16 @@ pub enum LumentixError {
     OfflineScanOutsideWindow = 233,
     /// Requested proof validity window is zero or exceeds the permitted maximum
     InvalidProofValidityWindow = 234,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Payment Split Escrow errors (Issue #1003) (235–239)
+    // ═══════════════════════════════════════════════════════════════════════
+    /// An escrow split already exists for this event
+    EscrowSplitAlreadyExists = 235,
+    /// No escrow split found for this event
+    EscrowSplitNotFound = 236,
+    /// The provided split_bps values do not sum to 10000
+    EscrowSplitInvalidBps = 237,
+    /// The escrow split is already under dispute and cannot be disputed again
+    EscrowAlreadyDisputed = 238,
 }

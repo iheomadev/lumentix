@@ -15,6 +15,7 @@ use crate::types::{
 
   CertificationStandard, EventCertificate,
     WalletSession, ValidationProof, OfflineScanRecord,
+    EscrowSplit,
 };
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
 
@@ -2321,4 +2322,31 @@ pub fn get_offline_scan(env: &Env, ticket_id: u64) -> Option<OfflineScanRecord> 
 pub fn has_offline_scan_synced(env: &Env, ticket_id: u64) -> bool {
     let key = (OFFLINE_SCAN_PREFIX, ticket_id);
     env.storage().persistent().has(&key)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYMENT SPLIT ESCROW STORAGE (Issue #1003)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ESCROW_SPLIT_PREFIX: &str = "ESCSPLIT_";
+
+/// Persist an escrow split configuration for a multi-organizer event.
+pub fn set_escrow_split(env: &Env, event_id: &String, split: &EscrowSplit) {
+    let key = (ESCROW_SPLIT_PREFIX, event_id.clone());
+    env.storage().persistent().set(&key, split);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_LIFETIME, PERSISTENT_LIFETIME);
+}
+
+/// Retrieve the escrow split configuration for an event, if one exists.
+pub fn get_escrow_split(env: &Env, event_id: &String) -> Option<EscrowSplit> {
+    let key = (ESCROW_SPLIT_PREFIX, event_id.clone());
+    let split: Option<EscrowSplit> = env.storage().persistent().get(&key);
+    if split.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_LIFETIME, PERSISTENT_LIFETIME);
+    }
+    split
 }

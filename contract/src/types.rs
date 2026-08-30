@@ -1083,3 +1083,38 @@ pub struct OfflineScanResult {
     /// Error discriminant explaining a rejection; zero when accepted.
     pub reason_code: u32,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Payment Split Escrow (Issue #1003)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Holds the split configuration for a multi-organizer event escrow.
+/// `split_bps` values must sum to 10000 (100%) and be parallel to `organizers`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowSplit {
+    /// The event this split belongs to.
+    pub event_id: String,
+    /// Ordered list of co-organizer addresses.
+    pub organizers: Vec<Address>,
+    /// Basis-point shares for each organizer (parallel to `organizers`; must sum to 10000).
+    pub split_bps: Vec<u32>,
+    /// Total ticket revenue held in escrow at the time of release.
+    pub total_amount: i128,
+    /// Whether funds have already been released to the organizers.
+    pub is_released: bool,
+    /// Whether this split is currently under dispute.
+    pub is_disputed: bool,
+}
+
+/// Reason supplied when a co-organizer raises a dispute on an escrow split.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EscrowDisputeReason {
+    /// One or more basis-point values are incorrect or the sum ≠ 10000.
+    InvalidSplit,
+    /// An expected co-organizer is absent from the split.
+    OrganizerMissing,
+    /// The held amount does not match the expected ticket revenue.
+    AmountMismatch,
+}

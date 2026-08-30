@@ -39,6 +39,7 @@ use crate::events::{
     UserExperiencePersonalized, EventRecommendationsCustomized, UserJourneyOptimized,
 
   EventCertificateIssued, CertificationStandardUpdated, UnderagePurchaseRejected,
+    EscrowSplitCreated, EscrowFundsReleased, EscrowSplitDisputed,
 };
 use crate::storage;
 use crate::types::{
@@ -61,6 +62,7 @@ use crate::types::{
     VenueSpaceAllocation, SubscriptionPlan,
     SubscriptionStatus, SecurityIncident, UserPreferences,
     CertificationStandard, AgeProof,
+    EscrowSplit, EscrowDisputeReason,
 };
 use crate::validation;
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Map, String, Vec};
@@ -7389,4 +7391,175 @@ impl LumentixContract {
 
         None
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Payment Split Escrow (Issue #1003)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Create a multi-organizer payment split escrow for an event.
+    ///
+    /// * `admin`       – must be the contract admin; authorization required.
+    /// * `event_id`    – string identifier of the event.
+    /// * `organizers`  – ordered list of co-organizer addresses.
+    /// * `split_bps`   – basis-point shares parallel to `organizers`; must sum to 10000.
+    ///
+    /// Emits `EscrowSplitCreated`.
+    pub fn create_escrow_split(
+        env: Env,
+        admin: Address,
+        event_id: String,
+        organizers: Vec<Address>,
+        split_bps: Vec<u32>,
+    ) -> Result<(), LumentixError> {
+        if !storage::is_initialized(&env) {
+            return Err(LumentixError::NotInitialized);
+        }
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(LumentixError::Unauthorized);
+        }
+
+        // Validate lengths match
+        if organizers.len() != split_bps.len() {
+            return Err(LumentixError::EscrowSplitInvalidBps);
+        }
+
+        // Validate basis points sum to 10000
+        let mut total_bps: u32 = 0;
+        for i in 0..split_bps.len() {
+            total_bps = total_bps.saturating_add(split_bps.get(i).unwrap_or(0));
+        }
+        if total_bps != 10_000 {
+            return Err(LumentixError::EscrowSplitInvalidBps);
+        }
+
+        // Check no existing split for this event
+        if storage::get_escrow_split(&env, &event_id).is_some() {
+            return Err(LumentixError::EscrowSplitAlreadyExists);
+        }
+
+        let split = EscrowSplit {
+            event_id: event_id.clone(),
+            organizers: organizers.clone(),
+            split_bps,
+            total_amount: 0,
+            is_released: false,
+            is_disputed: false,
+        };
+
+        storage::set_escrow_split(&env, &event_id, &split);
+
+        EscrowSplitCreated::emit(&env, event_id, organizers.len() as u32, admin);
+
+        Ok(())
+    }
+
+    /// Release escrowed funds to all co-organizers according to their split ratios.
+    ///
+    /// * `admin`        – must be the contract admin; authorization required.
+    /// * `event_id`     – string identifier of the event.
+    /// * `token`        – Soroban token contract address used for transfers.
+    /// * `total_amount` – total amount to split and transfer.
+    ///
+    /// Emits `EscrowFundsReleased`.
+    pub fn release_escrow_funds(
+        env: Env,
+        admin: Address,
+        event_id: String,
+        token: Address,
+        total_amount: i128,
+    ) -> Result<(), LumentixError> {
+        if !storage::is_initialized(&env) {
+            return Err(LumentixError::NotInitialized);
+        }
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        if admin != stored_admin {
+            return Err(LumentixError::Unauthorized);
+        }
+
+        let mut split = storage::get_escrow_split(&env, &event_id)
+            .ok_or(LumentixError::EscrowSplitNotFound)?;
+
+        if split.is_released {
+            return Err(LumentixError::EscrowAlreadyReleased);
+        }
+        if split.is_disputed {
+            return Err(LumentixError::EscrowAlreadyDisputed);
+        }
+
+        // Transfer each organizer's share
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        for i in 0..split.organizers.len() {
+            let organizer = split.organizers.get(i).unwrap();
+            let bps = split_bps_at(&split.split_bps, i);
+            let amount = total_amount * (bps as i128) / 10_000;
+            if amount > 0 {
+                token_client.transfer(&env.current_contract_address(), &organizer, &amount);
+            }
+        }
+
+        split.total_amount = total_amount;
+        split.is_released = true;
+        storage::set_escrow_split(&env, &event_id, &split);
+
+        EscrowFundsReleased::emit(&env, event_id, admin, total_amount);
+
+        Ok(())
+    }
+
+    /// Raise a dispute on an escrow split as a registered co-organizer.
+    ///
+    /// * `caller`   – must be one of the organizers in the split; authorization required.
+    /// * `event_id` – string identifier of the event.
+    /// * `reason`   – reason for the dispute.
+    ///
+    /// Emits `EscrowSplitDisputed`.
+    pub fn dispute_escrow_split(
+        env: Env,
+        caller: Address,
+        event_id: String,
+        reason: EscrowDisputeReason,
+    ) -> Result<(), LumentixError> {
+        if !storage::is_initialized(&env) {
+            return Err(LumentixError::NotInitialized);
+        }
+        caller.require_auth();
+
+        let mut split = storage::get_escrow_split(&env, &event_id)
+            .ok_or(LumentixError::EscrowSplitNotFound)?;
+
+        // Caller must be one of the registered organizers
+        let mut is_organizer = false;
+        for i in 0..split.organizers.len() {
+            if split.organizers.get(i).unwrap() == caller {
+                is_organizer = true;
+                break;
+            }
+        }
+        if !is_organizer {
+            return Err(LumentixError::Unauthorized);
+        }
+
+        if split.is_released {
+            return Err(LumentixError::EscrowAlreadyReleased);
+        }
+        if split.is_disputed {
+            return Err(LumentixError::EscrowAlreadyDisputed);
+        }
+
+        split.is_disputed = true;
+        storage::set_escrow_split(&env, &event_id, &split);
+
+        EscrowSplitDisputed::emit(&env, event_id, caller, reason);
+
+        Ok(())
+    }
+}
+
+/// Helper: read a single element from a `Vec<u32>` by index.
+/// This avoids a `clone` of the whole vec just to get one value.
+fn split_bps_at(vec: &Vec<u32>, index: u32) -> u32 {
+    vec.get(index).unwrap_or(0)
 }

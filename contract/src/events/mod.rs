@@ -1751,3 +1751,48 @@ impl OfflineScansSyncCompleted {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Payment Split Escrow Events (Issue #1003)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Emitted when an admin creates a multi-organizer escrow split for an event.
+pub struct EscrowSplitCreated;
+
+impl EscrowSplitCreated {
+    pub fn emit(env: &Env, event_id: String, organizer_count: u32, admin: Address) {
+        env.events().publish(
+            (symbol_short!("escsplit"),),
+            (event_id, organizer_count, admin),
+        );
+    }
+}
+
+/// Emitted when an admin releases escrowed funds to all co-organizers.
+pub struct EscrowFundsReleased;
+
+impl EscrowFundsReleased {
+    pub fn emit(env: &Env, event_id: String, admin: Address, total_amount: i128) {
+        env.events().publish(
+            (symbol_short!("escrelsd"),),
+            (event_id, admin, total_amount),
+        );
+    }
+}
+
+/// Emitted when a co-organizer raises a dispute on an escrow split.
+pub struct EscrowSplitDisputed;
+
+impl EscrowSplitDisputed {
+    pub fn emit(
+        env: &Env,
+        event_id: String,
+        caller: Address,
+        reason: crate::types::EscrowDisputeReason,
+    ) {
+        env.events().publish(
+            (symbol_short!("escdisp"),),
+            (event_id, caller, reason),
+        );
+    }
+}
