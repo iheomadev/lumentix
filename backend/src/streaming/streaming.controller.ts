@@ -17,10 +17,16 @@ import {
 } from '@nestjs/swagger';
 import { StreamingService } from './streaming.service';
 import {
+  BandwidthDetectionResponseDto,
+  BitrateSwitchResponseDto,
+  BufferingEventResponseDto,
+  DetectViewerBandwidthDto,
   ManageContentDeliveryDto,
   OptimizeStreamQualityDto,
+  ReportBufferingEventDto,
   StreamDeliveryResponseDto,
   StreamPerformanceResponseDto,
+  SwitchBitrateTierDto,
 } from './dto/streaming.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -78,5 +84,41 @@ export class StreamingController {
       eventId,
       req.user.id,
     );
+  }
+
+  @Post('events/:eventId/detect-bandwidth')
+  @Roles(Role.ORGANIZER)
+  @ApiOperation({ summary: 'Detect viewer bandwidth and get recommended bitrate tier' })
+  @ApiResponse({ status: 201, type: BandwidthDetectionResponseDto })
+  detectViewerBandwidth(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Body() dto: DetectViewerBandwidthDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<BandwidthDetectionResponseDto> {
+    return this.streamingService.detectViewerBandwidth(eventId, req.user.id, dto);
+  }
+
+  @Post('events/:eventId/switch-bitrate')
+  @Roles(Role.ORGANIZER)
+  @ApiOperation({ summary: 'Switch to a specific bitrate tier for stream quality control' })
+  @ApiResponse({ status: 201, type: BitrateSwitchResponseDto })
+  switchBitrateTier(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Body() dto: SwitchBitrateTierDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<BitrateSwitchResponseDto> {
+    return this.streamingService.switchBitrateTier(eventId, req.user.id, dto);
+  }
+
+  @Post('events/:eventId/buffering-event')
+  @Roles(Role.ORGANIZER)
+  @ApiOperation({ summary: 'Report a buffering event to update streaming performance metrics' })
+  @ApiResponse({ status: 201, type: BufferingEventResponseDto })
+  reportBufferingEvent(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Body() dto: ReportBufferingEventDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<BufferingEventResponseDto> {
+    return this.streamingService.reportBufferingEvent(eventId, req.user.id, dto);
   }
 }

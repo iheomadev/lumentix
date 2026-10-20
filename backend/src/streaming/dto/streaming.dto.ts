@@ -1,6 +1,87 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsInt, IsOptional, IsString, IsUrl, Min } from 'class-validator';
 
+export class DetectViewerBandwidthDto {
+  @ApiPropertyOptional({ description: 'Viewer session or connection ID' })
+  @IsOptional()
+  @IsString()
+  viewerSessionId?: string;
+}
+
+export class SwitchBitrateTierDto {
+  @ApiProperty({ description: 'Target bitrate tier', enum: ['1080p', '720p', '480p', '360p', 'auto'] })
+  @IsString()
+  tier: string;
+
+  @ApiPropertyOptional({ description: 'Viewer session or connection ID' })
+  @IsOptional()
+  @IsString()
+  viewerSessionId?: string;
+}
+
+export class ReportBufferingEventDto {
+  @ApiProperty({ description: 'Duration of buffering in milliseconds' })
+  @IsInt()
+  @Min(0)
+  bufferingDurationMs: number;
+
+  @ApiPropertyOptional({ description: 'Viewer session or connection ID' })
+  @IsOptional()
+  @IsString()
+  viewerSessionId?: string;
+
+  @ApiPropertyOptional({ description: 'Current bitrate at time of buffering in kbps' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  currentBitrateKbps?: number;
+}
+
+export class BandwidthDetectionResponseDto {
+  @ApiProperty()
+  eventId: string;
+
+  @ApiProperty({ description: 'Estimated viewer bandwidth in kbps' })
+  estimatedBandwidthKbps: number;
+
+  @ApiProperty({ description: 'Recommended bitrate tier based on bandwidth', enum: ['1080p', '720p', '480p', '360p'] })
+  recommendedTier: string;
+
+  @ApiProperty({ description: 'Recommended bitrate in kbps' })
+  recommendedBitrateKbps: number;
+}
+
+export class BitrateSwitchResponseDto {
+  @ApiProperty()
+  eventId: string;
+
+  @ApiProperty()
+  previousTier: string;
+
+  @ApiProperty()
+  newTier: string;
+
+  @ApiProperty()
+  newBitrateKbps: number;
+
+  @ApiProperty()
+  switchedAt: Date;
+}
+
+export class BufferingEventResponseDto {
+  @ApiProperty()
+  eventId: string;
+
+  @ApiProperty()
+  bufferingDurationMs: number;
+
+  @ApiProperty()
+  reportedAt: Date;
+
+  @ApiProperty({ description: 'Updated rebuffer ratio after this event' })
+  updatedRebufferRatioPercent: number;
+}
+
 export class ManageContentDeliveryDto {
   @ApiProperty({ example: 'https://cdn.lumentix.example' })
   @IsUrl()

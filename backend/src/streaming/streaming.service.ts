@@ -10,10 +10,16 @@ import { Repository } from 'typeorm';
 import { Event } from '../events/entities/event.entity';
 import { StreamingConfig } from './entities/streaming-config.entity';
 import {
+  BandwidthDetectionResponseDto,
+  BitrateSwitchResponseDto,
+  BufferingEventResponseDto,
+  DetectViewerBandwidthDto,
   ManageContentDeliveryDto,
   OptimizeStreamQualityDto,
+  ReportBufferingEventDto,
   StreamDeliveryResponseDto,
   StreamPerformanceResponseDto,
+  SwitchBitrateTierDto,
 } from './dto/streaming.dto';
 
 @Injectable()
@@ -127,6 +133,126 @@ export class StreamingService {
     return metrics;
   }
 
+  async detectViewerBandwidth(
+    eventId: string,
+    organizerId: string,
+    dto: DetectViewerBandwidthDto,
+  ): Promise<BandwidthDetectionResponseDto> {
+    await this.requireOrganizerEvent(eventId, organizerId);
+
+    const config = await this.streamingRepo.findOne({ where: { eventId } });
+
+    // Use stored target bitrate as a baseline; default to 2500kbps for auto
+    const baselineBitrateKbps = config?.targetBitrateKbps ?? 2_500;
+
+    // Simulate bandwidth detection using adaptive ladder metrics
+    // In production this would use a probe segment download test
+    const stored = config?.performanceMetrics ?? {};
+    const avgBitrateKbps = Number(stored.avgBitrateKbps) || baselineBitrateKbps;
+    const rebufferRatio = Number(stored.rebufferRatioPercent) || 0;
+
+    // Estimate available bandwidth: if rebuffering is high, bandwidth < stream bitrate
+    const bandwidthFactor = rebufferRatio > 2 ? 0.7 : rebufferRatio > 0.5 ? 0.9 : 1.1;
+    const estimatedBandwidthKbps = Math.round(avgBitrateKbps * bandwidthFactor);
+
+    const recommendedTier = this.tierFromBandwidth(estimatedBandwidthKbps);
+    const recommendedBitrateKbps = this.bitrateForTier(recommendedTier);
+
+    this.logger.log(
+      `Detected viewer bandwidth ~${estimatedBandwidthKbps}kbps for event ${eventId}, recommending ${recommendedTier}`,
+    );
+
+    return { eventId, estimatedBandwidthKbps, recommendedTier, recommendedBitrateKbps };
+  }
+
+  async switchBitrateTier(
+    eventId: string,
+    organizerId: string,
+    dto: SwitchBitrateTierDto,
+  ): Promise<BitrateSwitchResponseDto> {
+    await this.requireOrganizerEvent(eventId, organizerId);
+
+    let config = await this.streamingRepo.findOne({ where: { eventId } });
+    if (!config) {
+      throw new NotFoundException(
+        'Streaming is not configured for this event. Call manageContentDelivery first.',
+      );
+    }
+
+    const previousTier = config.qualityProfile ?? 'auto';
+    const newTier = dto.tier === 'auto' ? this.resolveQualityProfile(config.targetBitrateKbps) : dto.tier;
+    const newBitrateKbps = this.bitrateForTier(newTier);
+
+    config.qualityProfile = newTier;
+    config.targetBitrateKbps = newBitrateKbps;
+    config.adaptiveBitrate = dto.tier === 'auto';
+    config.deliveryConfig = {
+      ...config.deliveryConfig,
+      lastManualSwitch: new Date().toISOString(),
+      switchReason: 'manual',
+    };
+
+    await this.streamingRepo.save(config);
+    this.logger.log(`Switched bitrate tier for event ${eventId}: ${previousTier} -> ${newTier}`);
+
+    return {
+      eventId,
+      previousTier,
+      newTier,
+      newBitrateKbps,
+      switchedAt: new Date(),
+    };
+  }
+
+  async reportBufferingEvent(
+    eventId: string,
+    organizerId: string,
+    dto: ReportBufferingEventDto,
+  ): Promise<BufferingEventResponseDto> {
+    await this.requireOrganizerEvent(eventId, organizerId);
+
+    let config = await this.streamingRepo.findOne({ where: { eventId } });
+    if (!config) {
+      throw new NotFoundException(
+        'Streaming is not configured for this event. Call manageContentDelivery first.',
+      );
+    }
+
+    const stored = config.performanceMetrics ?? {};
+    const totalBufferingMs =
+      Number(stored.totalBufferingMs ?? 0) + dto.bufferingDurationMs;
+    const bufferingEventCount = Number(stored.bufferingEventCount ?? 0) + 1;
+
+    // Recalculate rebuffer ratio: total buffering / assumed 10min session (600000ms)
+    const sessionDurationMs = 600_000;
+    const updatedRebufferRatioPercent = parseFloat(
+      ((totalBufferingMs / sessionDurationMs) * 100).toFixed(2),
+    );
+
+    config.performanceMetrics = {
+      ...stored,
+      totalBufferingMs,
+      bufferingEventCount,
+      rebufferRatioPercent: updatedRebufferRatioPercent,
+      lastBufferingAt: new Date().toISOString(),
+      ...(dto.currentBitrateKbps !== undefined && {
+        avgBitrateKbps: dto.currentBitrateKbps,
+      }),
+    };
+
+    await this.streamingRepo.save(config);
+    this.logger.log(
+      `Buffering event reported for event ${eventId}: ${dto.bufferingDurationMs}ms, new rebuffer ratio: ${updatedRebufferRatioPercent}%`,
+    );
+
+    return {
+      eventId,
+      bufferingDurationMs: dto.bufferingDurationMs,
+      reportedAt: new Date(),
+      updatedRebufferRatioPercent,
+    };
+  }
+
   private async requireOrganizerEvent(
     eventId: string,
     organizerId: string,
@@ -173,6 +299,24 @@ export class StreamingService {
     if (score >= 75) return 'good';
     if (score >= 60) return 'degraded';
     return 'poor';
+  }
+
+  private tierFromBandwidth(bandwidthKbps: number): string {
+    if (bandwidthKbps >= 4_500) return '1080p';
+    if (bandwidthKbps >= 2_500) return '720p';
+    if (bandwidthKbps >= 1_000) return '480p';
+    return '360p';
+  }
+
+  private bitrateForTier(tier: string): number {
+    const map: Record<string, number> = {
+      '1080p': 5_000,
+      '720p': 2_500,
+      '480p': 1_000,
+      '360p': 600,
+      auto: 2_500,
+    };
+    return map[tier] ?? 2_500;
   }
 
   private toDeliveryResponse(config: StreamingConfig): StreamDeliveryResponseDto {
