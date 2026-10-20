@@ -35,3 +35,5 @@ export { WalletConnect } from './WalletConnect';
 export { WalletInfo } from './WalletInfo';
 export { default as WalletInstallPrompt } from './WalletInstallPrompt';
 export { default as WalletLinkSection } from './WalletLinkSection';
+export { default as KioskMode, KioskMode as KioskModeComponent } from './KioskMode';
+export type { ScanResult, AttendeePhoto, KioskModeProps } from './KioskMode';
