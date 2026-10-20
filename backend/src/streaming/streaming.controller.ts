@@ -42,7 +42,9 @@ export class StreamingController {
 
   @Put('events/:eventId/delivery')
   @Roles(Role.ORGANIZER)
-  @ApiOperation({ summary: 'Configure CDN and playback URLs for hybrid events' })
+  @ApiOperation({
+    summary: 'Configure CDN and playback URLs for hybrid events',
+  })
   @ApiResponse({ status: 200, type: StreamDeliveryResponseDto })
   manageContentDelivery(
     @Param('eventId', ParseUUIDPipe) eventId: string,
@@ -58,7 +60,9 @@ export class StreamingController {
 
   @Post('events/:eventId/optimize-quality')
   @Roles(Role.ORGANIZER)
-  @ApiOperation({ summary: 'Tune adaptive bitrate ladder for virtual attendees' })
+  @ApiOperation({
+    summary: 'Tune adaptive bitrate ladder for virtual attendees',
+  })
   @ApiResponse({ status: 200, type: StreamDeliveryResponseDto })
   optimizeStreamQuality(
     @Param('eventId', ParseUUIDPipe) eventId: string,
@@ -88,19 +92,27 @@ export class StreamingController {
 
   @Post('events/:eventId/detect-bandwidth')
   @Roles(Role.ORGANIZER)
-  @ApiOperation({ summary: 'Detect viewer bandwidth and get recommended bitrate tier' })
+  @ApiOperation({
+    summary: 'Detect viewer bandwidth and get recommended bitrate tier',
+  })
   @ApiResponse({ status: 201, type: BandwidthDetectionResponseDto })
   detectViewerBandwidth(
     @Param('eventId', ParseUUIDPipe) eventId: string,
     @Body() dto: DetectViewerBandwidthDto,
     @Req() req: AuthenticatedRequest,
   ): Promise<BandwidthDetectionResponseDto> {
-    return this.streamingService.detectViewerBandwidth(eventId, req.user.id, dto);
+    return this.streamingService.detectViewerBandwidth(
+      eventId,
+      req.user.id,
+      dto,
+    );
   }
 
   @Post('events/:eventId/switch-bitrate')
   @Roles(Role.ORGANIZER)
-  @ApiOperation({ summary: 'Switch to a specific bitrate tier for stream quality control' })
+  @ApiOperation({
+    summary: 'Switch to a specific bitrate tier for stream quality control',
+  })
   @ApiResponse({ status: 201, type: BitrateSwitchResponseDto })
   switchBitrateTier(
     @Param('eventId', ParseUUIDPipe) eventId: string,
@@ -112,13 +124,19 @@ export class StreamingController {
 
   @Post('events/:eventId/buffering-event')
   @Roles(Role.ORGANIZER)
-  @ApiOperation({ summary: 'Report a buffering event to update streaming performance metrics' })
+  @ApiOperation({
+    summary: 'Report a buffering event to update streaming performance metrics',
+  })
   @ApiResponse({ status: 201, type: BufferingEventResponseDto })
   reportBufferingEvent(
     @Param('eventId', ParseUUIDPipe) eventId: string,
     @Body() dto: ReportBufferingEventDto,
     @Req() req: AuthenticatedRequest,
   ): Promise<BufferingEventResponseDto> {
-    return this.streamingService.reportBufferingEvent(eventId, req.user.id, dto);
+    return this.streamingService.reportBufferingEvent(
+      eventId,
+      req.user.id,
+      dto,
+    );
   }
 }

@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, IsUrl, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
 
 export class DetectViewerBandwidthDto {
   @ApiPropertyOptional({ description: 'Viewer session or connection ID' })
@@ -9,7 +16,10 @@ export class DetectViewerBandwidthDto {
 }
 
 export class SwitchBitrateTierDto {
-  @ApiProperty({ description: 'Target bitrate tier', enum: ['1080p', '720p', '480p', '360p', 'auto'] })
+  @ApiProperty({
+    description: 'Target bitrate tier',
+    enum: ['1080p', '720p', '480p', '360p', 'auto'],
+  })
   @IsString()
   tier: string;
 
@@ -30,7 +40,9 @@ export class ReportBufferingEventDto {
   @IsString()
   viewerSessionId?: string;
 
-  @ApiPropertyOptional({ description: 'Current bitrate at time of buffering in kbps' })
+  @ApiPropertyOptional({
+    description: 'Current bitrate at time of buffering in kbps',
+  })
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -44,7 +56,10 @@ export class BandwidthDetectionResponseDto {
   @ApiProperty({ description: 'Estimated viewer bandwidth in kbps' })
   estimatedBandwidthKbps: number;
 
-  @ApiProperty({ description: 'Recommended bitrate tier based on bandwidth', enum: ['1080p', '720p', '480p', '360p'] })
+  @ApiProperty({
+    description: 'Recommended bitrate tier based on bandwidth',
+    enum: ['1080p', '720p', '480p', '360p'],
+  })
   recommendedTier: string;
 
   @ApiProperty({ description: 'Recommended bitrate in kbps' })
@@ -91,7 +106,10 @@ export class ManageContentDeliveryDto {
   @IsUrl()
   streamUrl: string;
 
-  @ApiPropertyOptional({ example: 'auto', enum: ['auto', '1080p', '720p', '480p'] })
+  @ApiPropertyOptional({
+    example: 'auto',
+    enum: ['auto', '1080p', '720p', '480p'],
+  })
   @IsOptional()
   @IsString()
   qualityProfile?: string;

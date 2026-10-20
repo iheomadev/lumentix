@@ -69,7 +69,7 @@ export class StreamingService {
     dto: OptimizeStreamQualityDto,
   ): Promise<StreamDeliveryResponseDto> {
     const event = await this.requireOrganizerEvent(eventId, organizerId);
-    let config = await this.streamingRepo.findOne({ where: { eventId } });
+    const config = await this.streamingRepo.findOne({ where: { eventId } });
 
     if (!config || !config.streamUrl) {
       throw new NotFoundException(
@@ -103,7 +103,9 @@ export class StreamingService {
 
     const config = await this.streamingRepo.findOne({ where: { eventId } });
     if (!config) {
-      throw new NotFoundException('No streaming configuration found for this event');
+      throw new NotFoundException(
+        'No streaming configuration found for this event',
+      );
     }
 
     const stored = config.performanceMetrics ?? {};
@@ -152,17 +154,23 @@ export class StreamingService {
     const rebufferRatio = Number(stored.rebufferRatioPercent) || 0;
 
     // Estimate available bandwidth: if rebuffering is high, bandwidth < stream bitrate
-    const bandwidthFactor = rebufferRatio > 2 ? 0.7 : rebufferRatio > 0.5 ? 0.9 : 1.1;
+    const bandwidthFactor =
+      rebufferRatio > 2 ? 0.7 : rebufferRatio > 0.5 ? 0.9 : 1.1;
     const estimatedBandwidthKbps = Math.round(avgBitrateKbps * bandwidthFactor);
 
     const recommendedTier = this.tierFromBandwidth(estimatedBandwidthKbps);
     const recommendedBitrateKbps = this.bitrateForTier(recommendedTier);
 
     this.logger.log(
-      `Detected viewer bandwidth ~${estimatedBandwidthKbps}kbps for event ${eventId}, recommending ${recommendedTier}`,
+      `Detected viewer bandwidth ~${estimatedBandwidthKbps}kbps for event ${eventId}${dto.viewerSessionId ? ` (session ${dto.viewerSessionId})` : ''}, recommending ${recommendedTier}`,
     );
 
-    return { eventId, estimatedBandwidthKbps, recommendedTier, recommendedBitrateKbps };
+    return {
+      eventId,
+      estimatedBandwidthKbps,
+      recommendedTier,
+      recommendedBitrateKbps,
+    };
   }
 
   async switchBitrateTier(
@@ -172,7 +180,7 @@ export class StreamingService {
   ): Promise<BitrateSwitchResponseDto> {
     await this.requireOrganizerEvent(eventId, organizerId);
 
-    let config = await this.streamingRepo.findOne({ where: { eventId } });
+    const config = await this.streamingRepo.findOne({ where: { eventId } });
     if (!config) {
       throw new NotFoundException(
         'Streaming is not configured for this event. Call manageContentDelivery first.',
@@ -180,7 +188,10 @@ export class StreamingService {
     }
 
     const previousTier = config.qualityProfile ?? 'auto';
-    const newTier = dto.tier === 'auto' ? this.resolveQualityProfile(config.targetBitrateKbps) : dto.tier;
+    const newTier =
+      dto.tier === 'auto'
+        ? this.resolveQualityProfile(config.targetBitrateKbps)
+        : dto.tier;
     const newBitrateKbps = this.bitrateForTier(newTier);
 
     config.qualityProfile = newTier;
@@ -193,7 +204,9 @@ export class StreamingService {
     };
 
     await this.streamingRepo.save(config);
-    this.logger.log(`Switched bitrate tier for event ${eventId}: ${previousTier} -> ${newTier}`);
+    this.logger.log(
+      `Switched bitrate tier for event ${eventId}: ${previousTier} -> ${newTier}`,
+    );
 
     return {
       eventId,
@@ -211,7 +224,7 @@ export class StreamingService {
   ): Promise<BufferingEventResponseDto> {
     await this.requireOrganizerEvent(eventId, organizerId);
 
-    let config = await this.streamingRepo.findOne({ where: { eventId } });
+    const config = await this.streamingRepo.findOne({ where: { eventId } });
     if (!config) {
       throw new NotFoundException(
         'Streaming is not configured for this event. Call manageContentDelivery first.',
@@ -319,7 +332,9 @@ export class StreamingService {
     return map[tier] ?? 2_500;
   }
 
-  private toDeliveryResponse(config: StreamingConfig): StreamDeliveryResponseDto {
+  private toDeliveryResponse(
+    config: StreamingConfig,
+  ): StreamDeliveryResponseDto {
     const cdn =
       config.cdnBaseUrl ??
       this.configService.get<string>('CDN_BASE_URL') ??
